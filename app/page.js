@@ -21,6 +21,8 @@ export default function Pagina() {
   const [occupato, setOccupato] = useState(false);
   const [sito, setSito] = useState(null);
   const [cronologia, setCronologia] = useState(null);
+  const [db, setDb] = useState(null);           // pannello «Collega il database»
+  const timerDb = useRef(null);
   const fondo = useRef(null);
 
   const carica = useCallback(async () => {
@@ -35,6 +37,8 @@ export default function Pagina() {
     const q = new URLSearchParams(window.location.search).get("errore");
     if (q === "accesso") setErrore("L'accesso con GitHub non è andato a buon fine. Riprova.");
     if (q === "non-ammesso") setErrore("Il tuo account GitHub non è nell'elenco del corso.");
+    if (q === "supabase") setDb({ fase: "intro", errore: "Il collegamento con Supabase non è andato a buon fine. Riprova." });
+    if (new URLSearchParams(window.location.search).get("db") === "1") { window.history.replaceState(null, "", "/"); avviaDatabase(); }
   }, [carica]);
 
   useEffect(() => {
@@ -129,6 +133,32 @@ export default function Pagina() {
     }
   }
 
+  function avviaDatabase() {
+    clearInterval(timerDb.current);
+    setDb({ fase: "lavoro", testo: "Creo il tuo database su Supabase…" });
+    (async () => {
+      const r = await fetch("/api/supabase/crea", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) return setDb(d.riautorizza ? { fase: "intro", errore: d.errore } : { fase: "errore", testo: d.errore || "Qualcosa non ha funzionato." });
+      let giri = 0;
+      timerDb.current = setInterval(async () => {
+        giri++;
+        try {
+          const s = await (await fetch("/api/supabase/stato?ref=" + d.ref)).json();
+          if (s.errore) { clearInterval(timerDb.current); return setDb(s.riautorizza ? { fase: "intro", errore: s.errore } : { fase: "errore", testo: s.errore }); }
+          if (s.pronto) { clearInterval(timerDb.current); return setDb({ fase: "fatto", blocco: s.blocco }); }
+          setDb({ fase: "lavoro", testo: s.testo });
+        } catch {}
+        if (giri > 90) { clearInterval(timerDb.current); setDb({ fase: "errore", testo: "Ci sta mettendo troppo. Controlla su supabase.com che il progetto sia attivo, poi riprova." }); }
+      }, 4000);
+    })();
+  }
+
+  async function copiaBlocco(blocco) {
+    try { await navigator.clipboard.writeText(blocco); setDb(x => ({ ...x, copiato: true })); }
+    catch { document.getElementById("blocco-db")?.select(); }
+  }
+
   async function annulla(id, sha) {
     if (!confirm("Annullare questa modifica? Il sito torna com'era prima.")) return;
     const r = await fetch("/api/undo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sha }) });
@@ -156,6 +186,7 @@ export default function Pagina() {
       <div className="destra">
         {me.login && <span>{me.login}{me.repo ? " · " + me.repo.split("/")[1] : ""}</span>}
         {me.repo && sito && <a className="btn" href={sito} target="_blank" rel="noopener">Apri il mio sito</a>}
+        {me.repo && me.database && <button className="btn" onClick={() => setDb(db ? null : { fase: "intro" })}>Collega il database</button>}
         {me.repo && <button className="btn" onClick={apriCronologia}>Cronologia</button>}
         {me.repo && <button className="btn" onClick={() => scegliRepo(null)}>Cambia sito</button>}
         {me.login && <button className="btn" onClick={esci}>Esci</button>}
@@ -209,6 +240,30 @@ export default function Pagina() {
 
   return (
     <div className="pagina">{testata}
+      {db && (
+        <div className="scheda" style={{ margin: "12px auto", maxWidth: 640 }}>
+          <h1>Collega il tuo database</h1>
+          {db.fase === "intro" && <>
+            <p>Così le cose che inserisci nel sito (classi, orario, impegni) restano salvate. Studio crea per te un database gratuito su Supabase: si apre Supabase, premi <b>Authorize</b> e torni qui.</p>
+            <p><b>Prima</b> di collegarlo: se vuoi che classi e orario siano già nel sito, scrivi in Studio «Aggiungi ai dati iniziali queste classi e questo orario…». Il database parte copiando quei dati.</p>
+            <a className="btn primario" href="/api/supabase/login">Collega Supabase</a>
+            {db.errore && <div className="errore">{db.errore}</div>}
+          </>}
+          {db.fase === "lavoro" && <p><span className="giro" />{db.testo}</p>}
+          {db.fase === "errore" && <><div className="errore">{db.testo}</div><div style={{ marginTop: 12 }}><button className="btn" onClick={avviaDatabase}>Riprova</button></div></>}
+          {db.fase === "fatto" && <>
+            <p>Il database è pronto. Ultimo passo, su Vercel:</p>
+            <ol>
+              <li>Copia queste due righe: <button className="btn piccolo" onClick={() => copiaBlocco(db.blocco)}>{db.copiato ? "Copiato ✓" : "Copia"}</button></li>
+              <li>Apri <a href="https://vercel.com/dashboard" target="_blank" rel="noopener">vercel.com</a> → il tuo progetto → <b>Settings</b> → <b>Environment Variables</b>.</li>
+              <li>Clicca nel primo campo <b>Key</b> e incolla: le due variabili si compilano da sole. Premi <b>Save</b>.</li>
+              <li>Vai in <b>Deployments</b> → i tre puntini dell'ultimo → <b>Redeploy</b>.</li>
+            </ol>
+            <textarea id="blocco-db" className="campo" readOnly rows={3} value={db.blocco} onFocus={e => e.target.select()} style={{ fontFamily: "monospace", fontSize: 12 }} />
+            <p style={{ fontSize: 13, opacity: 0.8 }}>La seconda riga è una chiave segreta: non incollarla mai in una chat né in un messaggio, solo su Vercel.</p>
+          </>}
+        </div>
+      )}
       {cronologia && (
         <div className="cronologia"><b>Ultime modifiche</b>
           {cronologia.map(c => (
