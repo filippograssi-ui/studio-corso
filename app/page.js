@@ -235,7 +235,7 @@ export default function Pagina() {
             {m.pub && (
               <div className="pub">
                 {m.pub.stato === "success" ? <span className="chip ok">Sito aggiornato</span>
-                  : ["failure", "error"].includes(m.pub.stato) ? <span className="chip ko">La pubblicazione è fallita: annulla la modifica o avvisa il docente</span>
+                  : ["failure", "error"].includes(m.pub.stato) ? <span className="chip ko">La pubblicazione è fallita. Prova a scrivere: «sistema il sito» (oppure annulla la modifica)</span>
                   : m.pub.stato === "nessuno" ? <span className="chip neutro">Controlla su Vercel che il sito si stia aggiornando</span>
                   : <span className="chip att"><span className="giro" />Pubblicazione in corso…</span>}
                 {m.pub.url && m.pub.stato === "success" && <a className="btn piccolo" href={m.pub.url} target="_blank" rel="noopener">Guarda</a>}
