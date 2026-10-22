@@ -52,6 +52,7 @@ const server = http.createServer((req, res) => {
     if (u === "/repos/utente/repo/git/ref/heads/main" && req.method === "GET") return json({ object: { sha: testa } });
     if ((m = u.match(/^\/repos\/utente\/repo\/git\/commits\/(\w+)$/)) && req.method === "GET") { const c = commit.get(m[1]); return c ? json({ sha: m[1], tree: { sha: c.tree }, message: c.message, parents: c.parents.map(sha => ({ sha })) }) : json({}, 404); }
     if (u.startsWith("/repos/utente/repo/tarball/")) { const c = commit.get(u.split("/").pop()); const buf = tarGz(c.tree); res.writeHead(200, { "Content-Type": "application/gzip" }); return res.end(buf); }
+    if ((m = u.match(/^\/repos\/utente\/repo\/git\/trees\/(\w+)$/)) && req.method === "GET") { const t = alberi.get(m[1]); return t ? json({ sha: m[1], truncated: false, tree: [...t].map(([path, sha]) => ({ path, mode: "100644", type: "blob", sha })) }) : json({ message: "no" }, 404); }
     if (u === "/repos/utente/repo/git/blobs") return json({ sha: aggiungiBlob(b.content) }, 201);
     if (u === "/repos/utente/repo/git/trees") {
       const base = new Map(alberi.get(b.base_tree));
@@ -90,6 +91,17 @@ function avviaClaudeFinto() {
       () => tool("write_file", { path: "lib/rotto.js", content: "export const a = 1;\n" }),
       () => fine("Ho aggiunto un piccolo file di prova."),
     ],
+    nuovo: [
+      () => tool("write_file", { path: "lib/nuovo-file.js", content: "export const ciao = 1;\n" }),
+      () => fine("Ho aggiunto un file nuovo."),
+    ],
+    css: [
+      () => tool("read_file", { path: "app/globals.css", start: 1, end: 5 }),
+      () => tool("edit_file", { path: "app/globals.css", old_str: "--bg: #f4f5f7;", new_str: "--bg: #eaf4ff; }\n  flex: 1; min-width: 130px;" }),
+      () => fine("Fatto, ho cambiato lo sfondo."),
+      () => tool("edit_file", { path: "app/globals.css", old_str: "--bg: #eaf4ff; }\n  flex: 1; min-width: 130px;", new_str: "--bg: #eaf4ff;" }),
+      () => fine("Ho cambiato lo sfondo (versione corretta)."),
+    ],
     domanda: [() => fine("Che colore preferisci, e per quale parte del sito?")],
   };
   const srv = http.createServer((req, res) => {
@@ -100,7 +112,8 @@ function avviaClaudeFinto() {
       const testoDi = m => (typeof m.content === "string" ? m.content : m.content.filter(x => x.type === "text").map(x => x.text).join(" "));
       const trovato = [...msgs].reverse().find(m => m.role === "user" && testoDi(m) && !testoDi(m).startsWith("Controllo automatico"));
       const richiesta = { content: testoDi(trovato) };
-      const chiave = /sfondo/i.test(richiesta.content) ? "sfondo" : /svago|menu/i.test(richiesta.content) ? "menu" : /errore/i.test(richiesta.content) ? "errore" : "domanda";
+      const chiave = /sfondo/i.test(richiesta.content) ? "sfondo" : /svago|menu/i.test(richiesta.content) ? "menu" : /errore/i.test(richiesta.content) ? "errore" : /nuovo/i.test(richiesta.content) ? "nuovo" : /css/i.test(richiesta.content) ? "css" : "domanda";
+      console.log("   [mock] chiave=" + chiave + " richiesta=" + JSON.stringify(richiesta.content.slice(0,50)));
       const passo = msgs.filter(m => m.role === "assistant" && Array.isArray(m.content)).length;
       const r = (scenari[chiave][passo] || (() => fine("Fatto.")))();
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -116,6 +129,7 @@ const { eseguiRichiesta } = await import("../lib/agent.js");
 const { annullaCommit } = await import("../lib/github.js");
 
 const storia = [];
+const fatti = [];
 const t0 = Date.now();
 for (const richiesta of richieste) {
   console.log("\n=== RICHIESTA:", richiesta);
@@ -123,6 +137,7 @@ for (const richiesta of richieste) {
   console.log("RISPOSTA:", r.testo);
   console.log("FILE CAMBIATI:", r.files, "| commit:", r.sha ? r.sha.slice(0, 8) : "nessuno");
   console.log("USO:", JSON.stringify(r.uso));
+  fatti.push(r);
   storia.push({ role: "user", content: richiesta }, { role: "assistant", content: r.testo });
 }
 console.log("\nTempo totale:", Math.round((Date.now() - t0) / 1000), "s");
@@ -137,6 +152,14 @@ if (richieste.length) {
   console.log("ANNULLA: il sito è tornato a prima dell'ultima modifica:", uguali);
   // rimetto lo stato PRIMA dell'annulla per esportare l'albero modificato
   testa = prima;
+}
+if (process.env.ANNULLA_PRIMO && fatti.length >= 2 && fatti[0].sha && fatti[1].sha) {
+  const nuovo = await annullaCommit("finto", "utente", "repo", fatti[0].sha);
+  const finale = alberi.get(commit.get(nuovo).tree), prima0 = alberi.get(commit.get(commit.get(fatti[0].sha).parents[0]).tree), dopo1 = alberi.get(commit.get(fatti[1].sha).tree);
+  const soloPrimo = fatti[0].files.filter(f => !fatti[1].files.includes(f));
+  const primoRipristinato = soloPrimo.every(f => finale.get(f) === prima0.get(f));
+  const secondoIntatto = fatti[1].files.every(f => finale.get(f) === dopo1.get(f));
+  console.log("ANNULLA PRIMO: file del primo ripristinati:", primoRipristinato, "| modifica del secondo intatta:", secondoIntatto, "| file toccati dal 1°:", fatti[0].files, "2°:", fatti[1].files);
 }
 // esporto l'albero finale (dopo tutte le richieste) in una cartella per provare la build
 const out = process.env.ESPORTA;
