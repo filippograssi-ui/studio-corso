@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PannelloResto } from "./pannello-resto";
 
 const SUGGERIMENTI = [
   "Cambia lo sfondo in un azzurro molto chiaro",
@@ -21,6 +22,7 @@ export default function Pagina() {
   const [occupato, setOccupato] = useState(false);
   const [sito, setSito] = useState(null);
   const [cronologia, setCronologia] = useState(null);
+  const [resto, setResto] = useState(false);   // pannello «Collega il resto»
   const [db, setDb] = useState(null);           // pannello «Collega il database»
   const timerDb = useRef(null);
   const fondo = useRef(null);
@@ -187,6 +189,7 @@ export default function Pagina() {
         {me.login && <span>{me.login}{me.repo ? " · " + me.repo.split("/")[1] : ""}</span>}
         {me.repo && sito && <a className="btn" href={sito} target="_blank" rel="noopener">Apri il mio sito</a>}
         {me.repo && me.database && <button className="btn" onClick={() => setDb(db ? null : { fase: "intro" })}>Collega il database</button>}
+        {me.repo && <button className="btn" onClick={() => setResto(x => !x)}>Collega il resto</button>}
         {me.repo && <button className="btn" onClick={apriCronologia}>Cronologia</button>}
         {me.repo && <button className="btn" onClick={() => scegliRepo(null)}>Cambia sito</button>}
         {me.login && <button className="btn" onClick={esci}>Esci</button>}
@@ -240,6 +243,7 @@ export default function Pagina() {
 
   return (
     <div className="pagina">{testata}
+      {resto && <PannelloResto sito={sito} onChiudi={() => setResto(false)} />}
       {db && (
         <div className="scheda" style={{ margin: "12px auto", maxWidth: 640 }}>
           <h1>Collega il tuo database</h1>
