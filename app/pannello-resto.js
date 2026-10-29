@@ -36,7 +36,9 @@ export function PannelloResto({ sito, onChiudi }) {
   const [idNumero, setIdNumero] = useState("");
   const [numero, setNumero] = useState("");
   const [appSecret, setAppSecret] = useState("");
-  const [indirizzo, setIndirizzo] = useState(sito ? new URL(sito).origin : "");
+  const [gId, setGId] = useState("");
+  const [gSegreto, setGSegreto] = useState("");
+  const [indirizzo, setIndirizzo] = useState("");
   const [copiato, setCopiato] = useState("");
 
   useEffect(() => { setGen(segretiGenerati()); }, []);
@@ -46,11 +48,18 @@ export function PannelloResto({ sito, onChiudi }) {
   const id = soloCifre(idNumero);
   const num = soloCifre(numero);
   const segreto = senzaSpazi(appSecret);
+  const googleId = senzaSpazi(gId);
+  const googleSegreto = senzaSpazi(gSegreto);
+  const usaGoogle = Boolean(googleId || googleSegreto);
   const usaWhatsApp = Boolean(tokenWa || id || num || segreto);
 
   const avvisi = [];
   if (chiaveClaude && !chiaveClaude.startsWith("sk-ant-")) avvisi.push("La chiave di Claude di solito inizia con «sk-ant-»: controlla di aver copiato quella giusta.");
   if (pass && !PASSWORD_OK.test(pass)) avvisi.push("La password deve avere da 8 a 64 caratteri: lettere, numeri e al massimo ! @ $ % ^ & * _ . + - (niente spazi).");
+  if (usaGoogle) {
+    if (googleId && !googleId.endsWith(".apps.googleusercontent.com")) avvisi.push("L'ID client di Google finisce con «.apps.googleusercontent.com»: controlla di aver copiato quello giusto.");
+    if (!googleId || !googleSegreto) avvisi.push("Per Google Calendar servono sia l'ID client sia il segreto client.");
+  }
   if (usaWhatsApp) {
     const mancano = [];
     if (!tokenWa) mancano.push("il token di accesso");
@@ -66,16 +75,18 @@ export function PannelloResto({ sito, onChiudi }) {
     const r = [];
     if (chiaveClaude) r.push(["ANTHROPIC_API_KEY", chiaveClaude]);
     if (pass && PASSWORD_OK.test(pass)) { r.push(["DASHBOARD_PASSWORD", pass]); r.push(["AUTH_SECRET", gen.AUTH_SECRET]); }
+    if (usaGoogle && googleId && googleSegreto) r.push(["GOOGLE_CALENDAR_CLIENT_ID", googleId], ["GOOGLE_CALENDAR_CLIENT_SECRET", googleSegreto]);
     if (usaWhatsApp && tokenWa && id && num && segreto) {
       r.push(["WHATSAPP_ACCESS_TOKEN", tokenWa], ["WHATSAPP_PHONE_NUMBER_ID", id], ["WHATSAPP_USER_NUMBER", num],
         ["WHATSAPP_APP_SECRET", segreto], ["WHATSAPP_VERIFY_TOKEN", gen.WHATSAPP_VERIFY_TOKEN],
         ["WHATSAPP_TEMPLATE_BRIEFING", "briefing_giornaliero"], ["CRON_SECRET", gen.CRON_SECRET]);
     }
     return r;
-  }, [gen, chiaveClaude, pass, usaWhatsApp, tokenWa, id, num, segreto]);
+  }, [gen, chiaveClaude, pass, usaGoogle, googleId, googleSegreto, usaWhatsApp, tokenWa, id, num, segreto]);
 
   const blocco = righe.map(([k, v]) => `${k}=${v}`).join("\n");
   const indirizzoPulito = indirizzo.trim().replace(/\/+$/, "");
+  const redirectGoogle = indirizzoPulito ? indirizzoPulito + "/api/google-calendar/callback" : "";
   const webhook = indirizzoPulito ? indirizzoPulito + "/api/whatsapp/webhook" : "";
 
   async function copia(nome, testo) {
@@ -94,6 +105,10 @@ export function PannelloResto({ sito, onChiudi }) {
       </div>
       <p>Qui prepari in un colpo solo le impostazioni per rendere il sito intelligente, protetto da password e collegato a WhatsApp. Compila solo le parti che vuoi attivare. <b>Quello che scrivi resta nel tuo browser:</b> Studio non lo riceve.</p>
 
+      <h2 style={titolo}>0 · L&apos;indirizzo del tuo sito</h2>
+      <p style={piccolo}>Su Vercel, nel tuo progetto, apri <b>Domains</b>: copia il primo indirizzo (finisce con .vercel.app). Serve per Google Calendar e per WhatsApp.</p>
+      <div style={campo}><input className="campo" placeholder="https://il-tuo-sito.vercel.app" value={indirizzo} onChange={e => setIndirizzo(e.target.value)} /></div>
+
       <h2 style={titolo}>1 · L&apos;intelligenza (Claude)</h2>
       <p style={piccolo}>Serve a riassunto del giorno, barra di cattura e a capire i messaggi di WhatsApp. Vai su <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> → <b>API Keys</b> → <b>Create Key</b> e copia la chiave. Se non hai crediti, in <b>Billing</b> aggiungi un piccolo credito (qualche dollaro bastano) e imposta un tetto di spesa mensile.</p>
       <div style={campo}><input className="campo" type="password" autoComplete="off" placeholder="Chiave di Claude (sk-ant-…)" value={claude} onChange={e => setClaude(e.target.value)} /></div>
@@ -110,9 +125,22 @@ export function PannelloResto({ sito, onChiudi }) {
       <div style={campo}><input className="campo" type="password" autoComplete="off" placeholder="Chiave segreta dell'app" value={appSecret} onChange={e => setAppSecret(e.target.value)} /></div>
       <p style={piccolo}>Il token che Meta mostra subito vale solo <b>24 ore</b>: va bene per la prova di oggi. Per averne uno permanente si segue la scheda dedicata.</p>
 
+      <h2 style={titolo}>4 · Google Calendar</h2>
+      <p style={piccolo}>Il sito mostra gli impegni del tuo Google Calendar e può aggiungerne. Servono le credenziali di Google, che crei tu gratis (circa 10 minuti). I nomi dei menu di Google cambiano spesso: se non trovi una voce, cercala con il testo.</p>
+      <ol style={{ color: "var(--muted)", fontSize: 14, paddingLeft: 20, margin: "0 0 10px" }}>
+        <li>Vai su <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">console.cloud.google.com</a> e crea un progetto (nome: «assistente»).</li>
+        <li>Apri <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">Google Calendar API</a> e premi <b>Abilita</b>.</li>
+        <li>In <b>Google Auth Platform</b> (o «Schermata consenso OAuth») scegli <b>Inizia</b>: nome app «assistente», la tua email, pubblico <b>Esterno</b>. Poi in <b>Pubblico</b> aggiungi la tua email tra gli <b>Utenti di prova</b>.</li>
+        <li>In <b>Client</b> (o «Credenziali») premi <b>Crea client</b> → tipo <b>Applicazione web</b> → in <b>URI di reindirizzamento autorizzati</b> incolla questo indirizzo: {redirectGoogle ? <><code style={{ wordBreak: "break-all" }}>{redirectGoogle}</code> <button className="btn piccolo" onClick={() => copia("g", redirectGoogle)}>{copiato === "g" ? "Copiato ✓" : "Copia"}</button></> : <i>(prima scrivi l&apos;indirizzo del sito qui sopra)</i>}</li>
+        <li>Premi <b>Crea</b>: Google mostra <b>ID client</b> e <b>Segreto client</b>. Incollali qui sotto.</li>
+      </ol>
+      <div style={campo}><input className="campo" autoComplete="off" placeholder="ID client (finisce con .apps.googleusercontent.com)" value={gId} onChange={e => setGId(e.target.value)} /></div>
+      <div style={campo}><input className="campo" type="password" autoComplete="off" placeholder="Segreto client (inizia con GOCSPX-)" value={gSegreto} onChange={e => setGSegreto(e.target.value)} /></div>
+      <p style={piccolo}>Finché l&apos;app Google è in prova, il collegamento vale 7 giorni e poi va rifatto (si preme di nuovo il pulsante nel sito). Chi vuole che duri, in <b>Pubblico</b> preme <b>Pubblica app</b>: per uso personale va bene anche senza la verifica di Google.</p>
+
       {avvisi.map((a, i) => <div className="avviso" key={i}>{a}</div>)}
 
-      <h2 style={titolo}>4 · Incolla su Vercel</h2>
+      <h2 style={titolo}>5 · Incolla su Vercel</h2>
       {!righe.length ? <p style={piccolo}>Compila almeno una delle parti qui sopra: appare il blocco da copiare.</p> : (
         <>
           <textarea className="campo" readOnly rows={Math.min(14, righe.length + 1)} value={blocco} onFocus={e => e.target.select()} style={{ fontFamily: "monospace", fontSize: 12 }} />
@@ -126,11 +154,14 @@ export function PannelloResto({ sito, onChiudi }) {
         </>
       )}
 
+      {usaGoogle && (
+        <p style={{ ...piccolo, marginTop: 14 }}><b>Dopo il Redeploy:</b> apri il tuo sito, nella scheda Calendario premi <b>Connetti Google Calendar</b>, scegli il tuo account e consenti. Se Google dice «app non verificata», premi <b>Avanzate</b> → <b>Vai a assistente</b>.</p>
+      )}
+
       {usaWhatsApp && gen && (
         <>
-          <h2 style={titolo}>5 · Dopo il Redeploy: dillo a Meta</h2>
-          <p style={piccolo}>Su Meta: <b>WhatsApp → Configurazione</b> → <b>Webhook</b> → Modifica. Serve l&apos;indirizzo vero del tuo sito (su Vercel, nel progetto, in <b>Domains</b>: il primo, che finisce con .vercel.app).</p>
-          <div style={campo}><input className="campo" placeholder="https://il-tuo-sito.vercel.app" value={indirizzo} onChange={e => setIndirizzo(e.target.value)} /></div>
+          <h2 style={titolo}>6 · Dopo il Redeploy: dillo a Meta</h2>
+          <p style={piccolo}>Su Meta: <b>WhatsApp → Configurazione</b> → <b>Webhook</b> → Modifica. L&apos;indirizzo è quello del tuo sito, scritto in alto.</p>
           {webhook && (
             <div style={{ fontSize: 14 }}>
               <div style={campo}><b>URL di callback</b><br /><code style={{ wordBreak: "break-all" }}>{webhook}</code> <button className="btn piccolo" onClick={() => copia("url", webhook)}>{copiato === "url" ? "Copiato ✓" : "Copia"}</button></div>
