@@ -53,5 +53,4 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .cronologia .riga { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .cronologia .riga:last-child { border-bottom: 0; }
 .avviso { background: var(--orange-soft); border-left: 3px solid var(--orange); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
-
-.vuoto { color: var(--faint); font-size: 13px; padding: 6px 0; }
+.avviso.ok { background: var(--green-soft); border-left-color: var(--green); }

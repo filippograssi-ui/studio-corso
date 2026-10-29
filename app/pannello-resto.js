@@ -24,6 +24,23 @@ function segretiGenerati() {
   return nuovi;
 }
 
+const CHIAVE_VAPID = "studio-resto-vapid";
+const b64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+// Coppia di chiavi per le notifiche (VAPID, curva P-256): generata nel browser, uguale a ogni riapertura.
+async function chiaviNotifiche() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CHIAVE_VAPID) || "null");
+    if (v?.pubblica && v?.privata) return v;
+  } catch {}
+  const coppia = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const pubblica = b64url(await crypto.subtle.exportKey("raw", coppia.publicKey));
+  const privata = (await crypto.subtle.exportKey("jwk", coppia.privateKey)).d;
+  const v = { pubblica, privata };
+  try { localStorage.setItem(CHIAVE_VAPID, JSON.stringify(v)); } catch {}
+  return v;
+}
+
 const senzaSpazi = s => String(s || "").replace(/\s+/g, "");
 const soloCifre = s => String(s || "").replace(/\D+/g, "");
 const PASSWORD_OK = /^[A-Za-z0-9!@$%^&*_.+-]{8,64}$/;
@@ -40,8 +57,24 @@ export function PannelloResto({ sito, onChiudi }) {
   const [gSegreto, setGSegreto] = useState("");
   const [indirizzo, setIndirizzo] = useState("");
   const [copiato, setCopiato] = useState("");
+  const [notifiche, setNotifiche] = useState(false);
+  const [vapid, setVapid] = useState(null);
+  const [tel, setTel] = useState({ stato: "", testo: "" }); // stato: "" | "lavoro" | "ok" | "errore"
 
   useEffect(() => { setGen(segretiGenerati()); }, []);
+  useEffect(() => { if (notifiche && !vapid) chiaviNotifiche().then(setVapid).catch(() => setNotifiche(false)); }, [notifiche, vapid]);
+
+  async function aggiungiTelefono() {
+    setTel({ stato: "lavoro", testo: "Aggiungo le funzioni al tuo sito…" });
+    try {
+      const r = await fetch("/api/funzioni/telefono", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.errore || "Non sono riuscito ad aggiungerlo.");
+      setTel({ stato: "ok", testo: d.gia ? "Il tuo sito ha già tutto: nessuna modifica necessaria." : `Fatto: ho aggiunto ${d.files.length} file al tuo sito. Si ripubblica da solo in circa un minuto.`, avvisi: d.avvisi || [] });
+    } catch (e) {
+      setTel({ stato: "errore", testo: e.message });
+    }
+  }
 
   const chiaveClaude = senzaSpazi(claude);
   const tokenWa = senzaSpazi(token);
@@ -75,6 +108,7 @@ export function PannelloResto({ sito, onChiudi }) {
     const r = [];
     if (chiaveClaude) r.push(["ANTHROPIC_API_KEY", chiaveClaude]);
     if (pass && PASSWORD_OK.test(pass)) { r.push(["DASHBOARD_PASSWORD", pass]); r.push(["AUTH_SECRET", gen.AUTH_SECRET]); }
+    if (notifiche && vapid) r.push(["VAPID_PUBLIC_KEY", vapid.pubblica], ["VAPID_PRIVATE_KEY", vapid.privata]);
     if (usaGoogle && googleId && googleSegreto) r.push(["GOOGLE_CALENDAR_CLIENT_ID", googleId], ["GOOGLE_CALENDAR_CLIENT_SECRET", googleSegreto]);
     if (usaWhatsApp && tokenWa && id && num && segreto) {
       r.push(["WHATSAPP_ACCESS_TOKEN", tokenWa], ["WHATSAPP_PHONE_NUMBER_ID", id], ["WHATSAPP_USER_NUMBER", num],
@@ -82,7 +116,7 @@ export function PannelloResto({ sito, onChiudi }) {
         ["WHATSAPP_TEMPLATE_BRIEFING", "briefing_giornaliero"], ["CRON_SECRET", gen.CRON_SECRET]);
     }
     return r;
-  }, [gen, chiaveClaude, pass, usaGoogle, googleId, googleSegreto, usaWhatsApp, tokenWa, id, num, segreto]);
+  }, [gen, chiaveClaude, pass, notifiche, vapid, usaGoogle, googleId, googleSegreto, usaWhatsApp, tokenWa, id, num, segreto]);
 
   const blocco = righe.map(([k, v]) => `${k}=${v}`).join("\n");
   const indirizzoPulito = indirizzo.trim().replace(/\/+$/, "");
@@ -103,7 +137,7 @@ export function PannelloResto({ sito, onChiudi }) {
         <h1>Collega il resto</h1>
         <button className="btn piccolo" onClick={onChiudi}>Chiudi</button>
       </div>
-      <p>Qui prepari in un colpo solo le impostazioni per rendere il sito intelligente, protetto da password e collegato a WhatsApp. Compila solo le parti che vuoi attivare. <b>Quello che scrivi resta nel tuo browser:</b> Studio non lo riceve.</p>
+      <p>Qui prepari in un colpo solo le impostazioni per rendere il sito intelligente, protetto da password, collegato a WhatsApp e installabile sul telefono. Compila solo le parti che vuoi attivare. <b>Quello che scrivi resta nel tuo browser:</b> Studio non lo riceve.</p>
 
       <h2 style={titolo}>0 · L&apos;indirizzo del tuo sito</h2>
       <p style={piccolo}>Su Vercel, nel tuo progetto, apri <b>Domains</b>: copia il primo indirizzo (finisce con .vercel.app). Serve per Google Calendar e per WhatsApp.</p>
@@ -140,8 +174,27 @@ export function PannelloResto({ sito, onChiudi }) {
 
       {avvisi.map((a, i) => <div className="avviso" key={i}>{a}</div>)}
 
-      <h2 style={titolo}>5 · Incolla su Vercel</h2>
-      {!righe.length ? <p style={piccolo}>Compila almeno una delle parti qui sopra: appare il blocco da copiare.</p> : (
+      <h2 style={titolo}>5 · Sul telefono e notifiche</h2>
+      <p style={piccolo}>Il tuo sito diventa un&apos;app: un&apos;icona nella schermata Home, che si apre a tutto schermo, e (se vuoi) notifiche, per esempio il riassunto del mattino. Premi il pulsante: Studio aggiunge i file al tuo sito.</p>
+      <div style={campo}>
+        <button className="btn primario" disabled={tel.stato === "lavoro"} onClick={aggiungiTelefono}>{tel.stato === "lavoro" ? "Un attimo…" : "Aggiungi al mio sito"}</button>
+      </div>
+      {tel.testo && <div className={tel.stato === "errore" ? "avviso" : "avviso ok"} style={{ marginBottom: 10 }}>{tel.testo}</div>}
+      {tel.avvisi?.map((a, i) => <div className="avviso" key={i}>{a}</div>)}
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14, margin: "8px 0" }}>
+        <input type="checkbox" checked={notifiche} onChange={e => setNotifiche(e.target.checked)} style={{ marginTop: 3 }} />
+        <span>Voglio anche le <b>notifiche</b> (serve un codice in più nel blocco qui sotto: lo preparo io).</span>
+      </label>
+      <ol style={{ color: "var(--muted)", fontSize: 14, paddingLeft: 20, margin: "0 0 10px" }}>
+        <li>Premi <b>Aggiungi al mio sito</b> e aspetta circa un minuto.</li>
+        {notifiche && <li>Incolla su Vercel il blocco del punto 6 e fai il <b>Redeploy</b> (le notifiche funzionano solo dopo).</li>}
+        <li><b>iPhone o iPad:</b> apri il tuo sito con <b>Safari</b> → tasto <b>Condividi</b> → <b>Aggiungi alla schermata Home</b> → Aggiungi. Poi apri l&apos;app dalla nuova icona. (Serve iOS 16.4 o più recente; le notifiche funzionano <i>solo</i> aprendo l&apos;app dall&apos;icona.)</li>
+        <li><b>Android:</b> apri il sito con Chrome → menu (tre puntini) → <b>Installa app</b> (o «Aggiungi a schermata Home»).</li>
+        {notifiche && <li>Aperta l&apos;app, tocca la campanella in alto a destra → <b>Attiva le notifiche</b> → consenti → <b>Prova</b>: ti arriva una notifica.</li>}
+      </ol>
+
+      <h2 style={titolo}>6 · Incolla su Vercel</h2>
+      {!righe.length ? <p style={piccolo}>Compila almeno una delle parti qui sopra (o spunta le notifiche): appare il blocco da copiare.</p> : (
         <>
           <textarea className="campo" readOnly rows={Math.min(14, righe.length + 1)} value={blocco} onFocus={e => e.target.select()} style={{ fontFamily: "monospace", fontSize: 12 }} />
           <div style={{ margin: "8px 0 4px" }}><button className="btn primario" onClick={() => copia("blocco", blocco)}>{copiato === "blocco" ? "Copiato ✓" : "Copia le impostazioni"}</button></div>
@@ -160,7 +213,7 @@ export function PannelloResto({ sito, onChiudi }) {
 
       {usaWhatsApp && gen && (
         <>
-          <h2 style={titolo}>6 · Dopo il Redeploy: dillo a Meta</h2>
+          <h2 style={titolo}>7 · Dopo il Redeploy: dillo a Meta</h2>
           <p style={piccolo}>Su Meta: <b>WhatsApp → Configurazione</b> → <b>Webhook</b> → Modifica. L&apos;indirizzo è quello del tuo sito, scritto in alto.</p>
           {webhook && (
             <div style={{ fontSize: 14 }}>
