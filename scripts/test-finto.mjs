@@ -113,6 +113,8 @@ function avviaClaudeFinto() {
       const trovato = [...msgs].reverse().find(m => m.role === "user" && testoDi(m) && !testoDi(m).startsWith("Controllo automatico"));
       const richiesta = { content: testoDi(trovato) };
       const chiave = /sfondo/i.test(richiesta.content) ? "sfondo" : /svago|menu/i.test(richiesta.content) ? "menu" : /errore/i.test(richiesta.content) ? "errore" : /nuovo/i.test(richiesta.content) ? "nuovo" : /css/i.test(richiesta.content) ? "css" : "domanda";
+      const nImg = msgs.flatMap(m => (Array.isArray(m.content) ? m.content : [])).filter(x => x.type === "image").length;
+      console.log("   [mock] immagini ricevute=" + nImg);
       console.log("   [mock] chiave=" + chiave + " richiesta=" + JSON.stringify(richiesta.content.slice(0,50)));
       const passo = msgs.filter(m => m.role === "assistant" && Array.isArray(m.content)).length;
       const r = (scenari[chiave][passo] || (() => fine("Fatto.")))();
@@ -133,7 +135,7 @@ const fatti = [];
 const t0 = Date.now();
 for (const richiesta of richieste) {
   console.log("\n=== RICHIESTA:", richiesta);
-  const r = await eseguiRichiesta({ token: "finto", owner: "utente", repo: "repo", richiesta, storia, onEvent: e => console.log("  ·", e.testo || e.type) });
+  const r = await eseguiRichiesta({ token: "finto", owner: "utente", repo: "repo", richiesta, storia, immagini: process.env.FOTO ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "/9j/4AAQSkZJRg==" } }] : [], onEvent: e => console.log("  ·", e.testo || e.type) });
   console.log("RISPOSTA:", r.testo);
   console.log("FILE CAMBIATI:", r.files, "| commit:", r.sha ? r.sha.slice(0, 8) : "nessuno");
   console.log("USO:", JSON.stringify(r.uso));

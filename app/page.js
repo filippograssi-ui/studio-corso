@@ -9,6 +9,21 @@ const SUGGERIMENTI = [
   "Aggiungi una sezione Verifiche per classe con data e stato",
 ];
 
+// Rimpicciolisce una foto (max 1600 px, JPEG) così passa veloce e sta nei limiti del server.
+async function riduciFoto(file) {
+  const bmp = await createImageBitmap(file).catch(() => null);
+  if (!bmp) throw new Error("illeggibile");
+  for (const [lato, qualita] of [[1600, 0.82], [1280, 0.7], [1000, 0.6]]) {
+    const k = Math.min(1, lato / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    const url = c.toDataURL("image/jpeg", qualita);
+    if (url.length < 1_200_000) return url;
+  }
+  throw new Error("troppo grande");
+}
+
 let contatore = 0;
 const nuovoId = () => ++contatore + "-" + Date.now();
 
@@ -22,6 +37,8 @@ export default function Pagina() {
   const [occupato, setOccupato] = useState(false);
   const [sito, setSito] = useState(null);
   const [cronologia, setCronologia] = useState(null);
+  const [foto, setFoto] = useState([]);        // foto allegate alla prossima richiesta (solo in memoria)
+  const [erroreFoto, setErroreFoto] = useState("");
   const [resto, setResto] = useState(false);   // pannello «Collega il resto»
   const [db, setDb] = useState(null);           // pannello «Collega il database»
   const timerDb = useRef(null);
@@ -93,14 +110,17 @@ export default function Pagina() {
 
   async function invia(t) {
     const richiesta = (t ?? testo).trim();
-    if (!richiesta || occupato) return;
+    const allegate = t === undefined ? foto : [];
+    if ((!richiesta && !allegate.length) || occupato) return;
     setTesto("");
+    setFoto([]);
+    setErroreFoto("");
     setOccupato(true);
     const storia = msgs.filter(m => !m.errore && !m.inCorso && m.testo).map(m => ({ role: m.ruolo === "tu" ? "user" : "assistant", content: m.testo }));
     const idTu = nuovoId(), idSt = nuovoId();
-    setMsgs(ms => [...ms, { id: idTu, ruolo: "tu", testo: richiesta }, { id: idSt, ruolo: "studio", testo: "", inCorso: true, stato: "Mi preparo…", progressi: [] }]);
+    setMsgs(ms => [...ms, { id: idTu, ruolo: "tu", testo: richiesta || "(foto allegata)", nFoto: allegate.length }, { id: idSt, ruolo: "studio", testo: "", inCorso: true, stato: "Mi preparo…", progressi: [] }]);
     try {
-      const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ richiesta, storia }) });
+      const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ richiesta, storia, immagini: allegate.map(f => f.url) }) });
       if (!r.ok || !r.body) {
         const d = await r.json().catch(() => ({}));
         aggiorna(idSt, { inCorso: false, errore: true, testo: d.errore || "Qualcosa non ha funzionato. Riprova." });
@@ -132,6 +152,21 @@ export default function Pagina() {
       aggiorna(idSt, { inCorso: false, errore: true, testo: "La connessione si è interrotta. Riprova tra un momento." });
     } finally {
       setOccupato(false);
+    }
+  }
+
+  async function aggiungiFoto(files) {
+    setErroreFoto("");
+    const immagini = [...files].filter(f => f.type.startsWith("image/") || /\.(heic|heif)$/i.test(f.name || ""));
+    if (!immagini.length) return;
+    for (const f of immagini) {
+      if (foto.length >= 3) { setErroreFoto("Puoi allegare al massimo 3 foto per volta."); break; }
+      try {
+        const url = await riduciFoto(f);
+        setFoto(x => (x.length >= 3 ? x : [...x, { id: nuovoId(), url }]));
+      } catch {
+        setErroreFoto("Non riesco a leggere questa foto. Se è del telefono, prova a fare uno screenshot invece; oppure copia il testo dell'errore e incollalo qui.");
+      }
     }
   }
 
@@ -283,18 +318,19 @@ export default function Pagina() {
         {!msgs.length && (
           <div className="scheda">
             <h1>Scrivi cosa vuoi cambiare</h1>
-            <p>Parla come a una persona: “sfondo azzurro”, “aggiungi una scheda per le verifiche”, “nel menu chiamalo Tempo libero”. Una cosa alla volta, poi guardi il risultato sul tuo sito (si aggiorna in circa un minuto).</p>
+            <p>Parla come a una persona: “sfondo azzurro”, “aggiungi una scheda per le verifiche”, “nel menu chiamalo Tempo libero”. Una cosa alla volta, poi guardi il risultato sul tuo sito (si aggiorna in circa un minuto). <b>Se qualcosa non va, premi «Foto»</b> (o incolla uno screenshot) e allega la schermata dell\u2019errore: Studio la legge e cerca di sistemare.</p>
             <div className="suggerimenti">{SUGGERIMENTI.map(s => <button key={s} onClick={() => invia(s)}>{s}</button>)}</div>
           </div>
         )}
         {msgs.map(m => (
           <div key={m.id} className={"msg " + m.ruolo + (m.errore ? " errore-msg" : "")} style={m.annullata ? { opacity: 0.55 } : undefined}>
+            {m.nFoto > 0 && m.ruolo === "tu" && <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>Foto allegate: {m.nFoto}</div>}
             {m.inCorso ? <><span className="giro" />{m.stato}<div className="progressi">{(m.progressi || []).map((p, i) => <div key={i}>· {p}</div>)}</div></> : m.testo}
             {m.files?.length > 0 && <div className="progressi">File cambiati: {m.files.join(", ")}</div>}
             {m.pub && (
               <div className="pub">
                 {m.pub.stato === "success" ? <span className="chip ok">Sito aggiornato</span>
-                  : ["failure", "error"].includes(m.pub.stato) ? <span className="chip ko">La pubblicazione è fallita. Prova a scrivere: «sistema il sito» (oppure annulla la modifica)</span>
+                  : ["failure", "error"].includes(m.pub.stato) ? <span className="chip ko">La pubblicazione è fallita. Prova a scrivere «sistema il sito» (anche allegando una foto dell\u2019errore su Vercel) oppure annulla la modifica</span>
                   : m.pub.stato === "nessuno" ? <span className="chip neutro">Controlla su Vercel che il sito si stia aggiornando</span>
                   : <span className="chip att"><span className="giro" />Pubblicazione in corso…</span>}
                 {m.pub.url && m.pub.stato === "success" && <a className="btn piccolo" href={m.pub.url} target="_blank" rel="noopener">Guarda</a>}
@@ -305,12 +341,30 @@ export default function Pagina() {
         ))}
         <div ref={fondo} />
       </div>
-      <div className="barra"><div className="barra-interna">
-        <textarea rows={1} placeholder="Cosa vuoi cambiare?" value={testo} disabled={occupato}
-          onChange={e => { setTesto(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(160, e.target.scrollHeight) + "px"; }}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); invia(); } }} />
-        <button className="btn primario" disabled={occupato || !testo.trim()} onClick={() => invia()}>{occupato ? "…" : "Invia"}</button>
-      </div></div>
+      <div className="barra">
+        {(foto.length > 0 || erroreFoto) && (
+          <div style={{ maxWidth: 760, margin: "0 auto 6px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {foto.map(f => (
+              <div key={f.id} style={{ position: "relative" }}>
+                <img src={f.url} alt="Foto allegata" style={{ height: 56, borderRadius: 8, border: "1px solid var(--border)", display: "block" }} />
+                <button className="btn piccolo" aria-label="Togli la foto" onClick={() => setFoto(x => x.filter(y => y.id !== f.id))} style={{ position: "absolute", top: -8, right: -8, padding: "0 7px" }}>×</button>
+              </div>
+            ))}
+            {erroreFoto && <span className="errore" style={{ margin: 0 }}>{erroreFoto}</span>}
+          </div>
+        )}
+        <div className="barra-interna">
+          <label className="btn" style={{ cursor: occupato ? "default" : "pointer", opacity: occupato ? 0.5 : 1 }} title="Allega una foto o uno screenshot">
+            Foto
+            <input type="file" accept="image/*" multiple hidden disabled={occupato} onChange={e => { aggiungiFoto(e.target.files); e.target.value = ""; }} />
+          </label>
+          <textarea rows={1} placeholder={foto.length ? "Scrivi cosa non va (o invia solo la foto)" : "Cosa vuoi cambiare?"} value={testo} disabled={occupato}
+            onChange={e => { setTesto(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(160, e.target.scrollHeight) + "px"; }}
+            onPaste={e => { const fs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/")); if (fs.length) { e.preventDefault(); aggiungiFoto(fs); } }}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); invia(); } }} />
+          <button className="btn primario" disabled={occupato || (!testo.trim() && !foto.length)} onClick={() => invia()}>{occupato ? "…" : "Invia"}</button>
+        </div>
+      </div>
     </div>
   );
 }
